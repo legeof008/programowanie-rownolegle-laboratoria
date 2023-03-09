@@ -14,10 +14,11 @@
 #include "sum.h"
 #include "try.h"
 
+#define IS_ME 0
 #define READ_WRITE_FLAG 0644
 #define DECIMAL_BASE 10
 #define NO_ADDR 0
-#define EMPTY_FLAG 0
+#define NO_ADDITIONAL_OPTIONS 0
 #define FROM_BEGINNING 0
 #define ALL_PIDS -1
 #define NO_BUFF NULL
@@ -27,12 +28,16 @@
 #define FILE_READ_MODE "r"
 #define SELF_FILENAME "sum.c"
 
+pid_t *global_subprocess_index;
 sigset_t global_process_mask;
+key_t shared_memory_data_key, shared_memory_result_key, shared_memory_start_indexes_key;
 struct sigaction global_usr1_action;
 double * global_input_data_vector;
 double * global_result_vector;
 int* global_index_vector;
 int global_index_increment;
+int global_input_vector_len;
+int global_number_of_processes_plus_one;
 
 struct sum_vector_t *self_new(char *filename) {
     FILE *file_stream;
@@ -44,7 +49,7 @@ struct sum_vector_t *self_new(char *filename) {
     catch(...) {
     perror("Error: File could not be opened\n");
     exit(EXIT_FAILURE);
-}
+    }
 
     char file_read_buffer[FILE_READING_BUFFER_SIZE + NULL_TERMINATED_CHARACTER_OFFSET];
     int number_of_vector_elements;
@@ -80,9 +85,44 @@ void self_print_elements(sum_vector_t *self) {
 }
 
 void on_usr1(int signal) {
+
     printf("USR1 recived ...\n");
-    if(global_input_data_vector == NULL)
-        printf("nullisimo\n");
+
+    int shared_memory_data_id, shared_memory_results_id, shared_memory_start_indexes_id;
+    int starting_index;
+    try
+    {
+        shared_memory_data_id = shmget(shared_memory_data_key, global_input_vector_len * sizeof (double ), READ_WRITE_FLAG | IPC_CREAT);
+        throw_if_fail(shared_memory_data_id);
+        shared_memory_results_id = shmget(shared_memory_result_key, global_number_of_processes_plus_one, READ_WRITE_FLAG | IPC_CREAT);
+        throw_if_fail(shared_memory_results_id);
+        shared_memory_start_indexes_id = shmget(shared_memory_start_indexes_key, global_number_of_processes_plus_one, READ_WRITE_FLAG | IPC_CREAT);
+        throw_if_fail(shared_memory_start_indexes_id);
+    }
+    catch(...) {
+        perror("Error: Could not initialise shared memory.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    global_input_data_vector = shmat(shared_memory_data_id, NO_ADDR, NO_ADDITIONAL_OPTIONS);
+    global_result_vector = shmat(shared_memory_results_id, NO_ADDR, NO_ADDITIONAL_OPTIONS);
+    global_index_vector = shmat(shared_memory_start_indexes_id, NO_ADDR, NO_ADDITIONAL_OPTIONS);
+
+    for(int i = 0; i < global_number_of_processes_plus_one; i++)
+    {
+        if(global_subprocess_index[i] == IS_ME) {
+            starting_index = global_index_vector[i];
+            global_result_vector[i] = 0;
+
+            for(int j = starting_index; j < starting_index + global_index_increment && j < global_input_vector_len; j++){
+                global_result_vector[i] += global_input_data_vector[j];
+            }
+            printf("Sum from %d is %f\n",getpid(),global_result_vector[i]);
+            exit(EXIT_SUCCESS);
+        }
+    }
+
+
     exit(EXIT_SUCCESS);
 }
 void on_usr2(int signal) {
@@ -119,8 +159,8 @@ void spawn_processes(pid_t *subprocess_index, int number_of_processes) {
             throw_if_fail(subprocess_index[i]);
         }
         catch(...) {
-        perror("Error: Child process could not be created\n");
-        exit(EXIT_FAILURE);
+            perror("Error: Child process could not be created\n");
+            exit(EXIT_FAILURE);
         }
         if (subprocess_index[i] == Child) {
             configure_signal_handling_and_await();
@@ -129,7 +169,7 @@ void spawn_processes(pid_t *subprocess_index, int number_of_processes) {
 }
 
 int calculate_index_base(int number_of_processes, int vector_length) {
-    return (int) round((double) vector_length / number_of_processes);
+    return (int) round((double) vector_length / (number_of_processes - 1));
 }
 
 void send_to_all(pid_t* subprocess_index, int number_of_processes, int signal){
@@ -162,54 +202,61 @@ void cleanup(pid_t* subprocess_index,int number_of_processes,char* cleanup_messa
 
 int main(int argc, char **argv) {
 
-    int number_of_processes = 3;
-
-    pid_t *subprocess_index = malloc(number_of_processes * sizeof(pid_t));
-    spawn_processes(subprocess_index, number_of_processes);
+    shared_memory_data_key = ftok(SELF_FILENAME,FTOK_PRIME_1);
+    shared_memory_result_key = ftok(SELF_FILENAME,FTOK_PRIME_2);
+    shared_memory_start_indexes_key = ftok(SELF_FILENAME,FTOK_PRIME_3);
 
     sum_vector_t *v = self_new("vector.dat");
+    global_number_of_processes_plus_one = 5;
+    global_input_vector_len = v->length;
+    global_index_increment = calculate_index_base(global_number_of_processes_plus_one, v->length);
 
-    if (number_of_processes > v->length) {
-        cleanup(subprocess_index,number_of_processes,"Too many tasks for processes !");
+    global_subprocess_index = malloc(global_number_of_processes_plus_one * sizeof(pid_t));
+    spawn_processes(global_subprocess_index, global_number_of_processes_plus_one);
+
+    if (global_number_of_processes_plus_one > v->length) {
+        cleanup(global_subprocess_index, global_number_of_processes_plus_one, "Too many tasks for processes.");
         exit(EXIT_FAILURE);
     }
 
     int shared_memory_data_id, shared_memory_results_id, shared_memory_start_indexes_id;
-    key_t shared_memory_data_key = ftok(SELF_FILENAME,FTOK_PRIME_1);
-    key_t shared_memory_result_key = ftok(SELF_FILENAME,FTOK_PRIME_2);
-    key_t shared_memory_start_indexes_key = ftok(SELF_FILENAME,FTOK_PRIME_3);
     try
     {
         shared_memory_data_id = shmget(shared_memory_data_key, v->length * sizeof (double ), READ_WRITE_FLAG | IPC_CREAT);
         throw_if_fail(shared_memory_data_id);
-        shared_memory_results_id = shmget(shared_memory_result_key, number_of_processes, READ_WRITE_FLAG | IPC_CREAT);
+        shared_memory_results_id = shmget(shared_memory_result_key, global_number_of_processes_plus_one, READ_WRITE_FLAG | IPC_CREAT);
         throw_if_fail(shared_memory_results_id);
-        shared_memory_start_indexes_id = shmget(shared_memory_start_indexes_key, number_of_processes, READ_WRITE_FLAG | IPC_CREAT);
+        shared_memory_start_indexes_id = shmget(shared_memory_start_indexes_key, global_number_of_processes_plus_one, READ_WRITE_FLAG | IPC_CREAT);
         throw_if_fail(shared_memory_start_indexes_id);
     }
     catch(...) {
+        cleanup(global_subprocess_index, global_number_of_processes_plus_one, "Too many tasks for processes.");
         perror("Error: Could not initialise shared memory.\n");
         exit(EXIT_FAILURE);
     }
 
-    global_input_data_vector = shmat(shared_memory_data_id, NO_ADDR, EMPTY_FLAG);
-    global_result_vector = shmat(shared_memory_results_id, NO_ADDR, EMPTY_FLAG);
+    global_input_data_vector = shmat(shared_memory_data_id, NO_ADDR, NO_ADDITIONAL_OPTIONS);
+    global_result_vector = shmat(shared_memory_results_id, NO_ADDR, NO_ADDITIONAL_OPTIONS);
     populate_sm_vector(global_input_data_vector, v);
 
-    global_index_increment = calculate_index_base(number_of_processes,v->length);
-    printf("Global index increment is %d\n",global_index_increment);
-    global_index_vector = shmat(shared_memory_start_indexes_id, NO_ADDR, EMPTY_FLAG);
-    populate_shared_memory_indexes(global_index_vector,global_index_increment,number_of_processes);
+    global_index_vector = shmat(shared_memory_start_indexes_id, NO_ADDR, NO_ADDITIONAL_OPTIONS);
+    populate_shared_memory_indexes(global_index_vector, global_index_increment, global_number_of_processes_plus_one);
 
-    kill(subprocess_index[0], SIGUSR1);
-    waitpid(ALL_PIDS, FROM_BEGINNING, EMPTY_FLAG);
+    send_to_all(global_subprocess_index, global_number_of_processes_plus_one, SIGUSR1);
+    waitpid(ALL_PIDS, FROM_BEGINNING, NO_ADDITIONAL_OPTIONS);
 
-    // shared memory cleanup and normal cleanup
+    double sum = 0.;
+    for(int i = 0; i < global_number_of_processes_plus_one; i++)
+    {
+        sum += global_result_vector[i];
+    }
+
+    printf("Sum is %f\n", sum);
     printf("Destroying global shared memory input data vector... Exit status  %d\n",shmctl(shared_memory_data_id,IPC_RMID,NO_BUFF));
     printf("Destroying global shared memory results vector... Exit status %d\n",shmctl(shared_memory_results_id,IPC_RMID,NO_BUFF));
     printf("Destroying global shared memory indexing data vector... Exit status %d\n",shmctl(shared_memory_start_indexes_id,IPC_RMID,NO_BUFF));
     printf("Vec_size = %d\n", v->length);
     self_print_elements(v);
-    cleanup(subprocess_index,number_of_processes,"The program ended successfully.\n");
+    cleanup(global_subprocess_index, global_number_of_processes_plus_one, "The program ended successfully.\n");
     self_free(v);
 }
