@@ -3,16 +3,13 @@
 #include <math.h>
 #include <omp.h>
 
-#ifndef N
-#define N 10000000
-#endif
-#ifndef THREAD_CHUNK_SIZE
-#define THREAD_CHUNK_SIZE N / 1000
-#endif
+#define THREAD_CHUNK_SIZE N / 100
+
 #define S (int)sqrt(N)
 #define M N/10
 
 int main(int argc, char **argv) {
+/*Do something*/
 
     long int a[S + 1]; /*tablica pomocnicza*/
     long int pierwsze[M]; /*liczby pierwsze w przedziale 2..N*/
@@ -22,13 +19,11 @@ int main(int argc, char **argv) {
     double czas; /*zmienna do  mierzenia czasu*/
     FILE *fp;
 /*wyznaczanie podzielnikow z przedzialow 2..S*/
-
-
+    double start = omp_get_wtime();
+    omp_set_num_threads(NUM_OF_THREADS);
     int p_tid;
 #pragma omp parallel shared(a) private(p_tid) default(none)
     {
-        omp_set_dynamic(1);
-        p_tid = omp_get_thread_num();
 #pragma omp for schedule(runtime)
         for (i = 2; i <= S; i++) {
             a[i] = 1; /*inicjowanie*/
@@ -48,7 +43,6 @@ int main(int argc, char **argv) {
                         a[k] = 0;
                 }
     }
-    printf("lpier = %ld\n", llpier);
 
     lpodz = llpier; /*zapamietanie liczby podzielnikow*/
 /*wyznaczanie liczb pierwszych*/
@@ -72,5 +66,7 @@ int main(int argc, char **argv) {
     for (i = 0; i < llpier; i++)
         fprintf(fp, "%ld ", pierwsze[i]);
     fclose(fp);
+    double end = omp_get_wtime();
+    printf("Time in seconds = %f\n",end-start);
     return 0;
 }
