@@ -22,7 +22,7 @@ integrate(integrated_function_t function, double begin_idx, double ending_idx, i
     MPI_Request request;
     for (int i = 0; i < num_of_points; i++) {
         starting_indexes[i] = begin_idx + i * rectangle_len;
-        //printf("idx = %f\n", starting_indexes[i]);
+        printf("idx = %f\n", starting_indexes[i]);
     }
     if (process_rank == SENDER) {
         for (int i = 0; i <= size_of_cluster - 1; i++) {
@@ -37,8 +37,9 @@ integrate(integrated_function_t function, double begin_idx, double ending_idx, i
 
     }
     for (int i = 1; i <= idx_len; i++) {
-        double result_local = (scattered_data[i] + i * rectangle_len) * function(begin_idx);
-        g_result += result_local;
+        //double result_local = (scattered_data[i] + i * rectangle_len) * function(begin_idx);
+        //g_result += result_local;
+        g_result++;
         MPI_Barrier(MPI_COMM_WORLD);
     }
 }

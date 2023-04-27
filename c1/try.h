@@ -1,5 +1,5 @@
 //
-// Created by maciek on 3/8/23.
+// Created by maciek  and kuba
 //
 
 #ifndef PROGRAMOWANIE_ROWNOLEGLE_LABORATORIA_TRY_H

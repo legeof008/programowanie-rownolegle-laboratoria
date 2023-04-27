@@ -1,5 +1,6 @@
 //
-// Created by maciek on 3/5/23.
+// Created by maciek and kuba
+// WARNING: compile with -lm flag
 //
 #include <stdlib.h>
 #include <stdio.h>
